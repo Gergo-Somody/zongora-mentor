@@ -126,8 +126,8 @@
 
                 // SZÁMOK ÉS BETŰK (Annotation)
                 // Itt írjuk ki a hang nevét és az ujjrendet (n.midi % 5 + 1)
-                const fingering = (n.midi % 5) + 1;
-                const label = n.name + " (" + fingering + ")";
+                //const fingering = (n.midi % 5) + 1;
+                const label = n.name;
                 
                 vNote.addModifier(new VF.Annotation(label)
                     .setVerticalJustification(clef === "treble" ? VF.Annotation.VerticalJustify.TOP : VF.Annotation.VerticalJustify.BOTTOM)
@@ -143,19 +143,31 @@
             input.addListener("noteon", e => handleInput(e.note.identifier));
         });
 
-        function handleInput(playedNote) {
-            const targetR = rightHandNotes[currentIndex]?.name;
-            const targetL = leftHandNotes[currentIndex]?.name;
+let notesPressedInCurrentStep = new Set(); // Eltároljuk, mit ütött le éppen
 
-            if (playedNote === targetR || playedNote === targetL) {
-                currentIndex++;
-                if (currentIndex < noteXPositions.length) {
-                    updateCursor(currentIndex);
-                } else {
-                    document.getElementById('status').innerText = "Szakasz vége! 🎉";
-                }
-            }
+function handleInput(playedNote) {
+    const targetR = rightHandNotes[currentIndex]?.name;
+    const targetL = leftHandNotes[currentIndex]?.name;
+    
+    notesPressedInCurrentStep.add(playedNote);
+
+    // Megnézzük, hogy minden elvárt hang le lett-e ütve
+    let rightOk = !targetR || notesPressedInCurrentStep.has(targetR);
+    let leftOk = !targetL || notesPressedInCurrentStep.has(targetL);
+
+    if (rightOk && leftOk) {
+        // SIKER! Mindkét kéz (vagy a szükséges) teljesítve
+        currentIndex++;
+        notesPressedInCurrentStep.clear(); // Következő lépéshez ürítünk
+        
+        if (currentIndex < noteXPositions.length) {
+            updateCursor(currentIndex);
+            // Vizuális visszajelzés (opcionális hang)
+        } else {
+            document.getElementById('status').innerText = "Szakasz vége! 🎉";
         }
+    }
+}
 
 function updateCursor(index) {
             const cursor = document.getElementById('cursor');

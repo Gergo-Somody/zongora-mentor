@@ -22,6 +22,10 @@
             justify-content: center; align-items: center; z-index: 100;
         }
         .controls, .metronome-controls { margin-top: 20px; background: #222; padding: 15px; border-radius: 10px; display: inline-block; }
+    
+    .flash-correct { background: #2ecc71 !important; transition: 0.1s; }
+.flash-wrong { background: #e74c3c !important; transition: 0.1s; }
+.next-note-hint { font-size: 1.2rem; color: #aaa; margin-top: 5px; }
     </style>
 </head>
 <body>
@@ -50,6 +54,10 @@
         <button onclick="startRace()" id="start-btn" disabled>Verseny Indítása!</button>
     </div>
 
+    <button onclick="hardMode = !hardMode; alert('Hard Mode: ' + (hardMode ? 'BE' : 'KI'))">
+    Hard Mode (Betűk elrejtése)
+</button>
+
     <div class="metronome-controls">
         <label>Tempó (BPM): </label>
         <input type="number" id="bpm-input" value="100" min="40" max="240">
@@ -62,6 +70,9 @@
     </div>
 
     <script>
+        let lastInputTime1 = 0;
+let lastInputTime2 = 0;
+const debounceInterval = 50; // Ezredmásodperc (50ms)
 let songNotes = [];
 let p1Index = 0, p2Index = 0;
 let p1Score = 0, p2Score = 0;
@@ -95,12 +106,15 @@ document.getElementById('midi-upload').addEventListener('change', async (e) => {
     reader.readAsArrayBuffer(file);
 });
 
-// --- KOTTA RAJZOLÁSA ---
+let hardMode = false; // Ha true, eltűnnek a betűk
+
 function drawNote(divId, noteName) {
     const container = document.getElementById(divId);
     container.innerHTML = "";
+    
+    // 1. Kotta rajzolása (VexFlow)
     const renderer = new Vex.Flow.Renderer(container, Vex.Flow.Renderer.Backends.SVG);
-    renderer.resize(300, 120);
+    renderer.resize(300, 150); // Kicsit magasabb, hogy elférjen a betű
     const context = renderer.getContext();
     const stave = new Vex.Flow.Stave(10, 0, 280);
     stave.addClef("treble").setContext(context).draw();
@@ -110,6 +124,18 @@ function drawNote(divId, noteName) {
     if(noteName.includes("#")) note.addModifier(new Vex.Flow.Accidental("#"), 0);
 
     Vex.Flow.Formatter.FormatAndDraw(context, stave, [note]);
+
+    // 2. Hangnév kiírása (Segítség)
+    if (!hardMode) {
+        const label = document.createElement("div");
+        label.style.fontSize = "40px";
+        label.style.fontWeight = "bold";
+        label.style.color = "#f1c40f"; // Szép sárga, jól látszik
+        label.style.marginTop = "-20px";
+        // Csak a betűt írjuk ki, az oktávszámot (pl. 4) levágjuk
+        label.innerText = noteName.replace(/\d+/, ""); 
+        container.appendChild(label);
+    }
 }
 
 // --- VERSENY INDÍTÁSA ---
@@ -142,22 +168,41 @@ WebMidi.enable().then(() => {
         const input = WebMidi.inputs[0];
         input.addListener("noteon", e => {
             if (!raceActive) return;
-            
-            // Split: C4 (60) alatt Kék, felette Piros
+
+            const now = performance.now();
             const player = e.note.number < 60 ? 1 : 2;
+
+            // Debouncing ellenőrzés játékosonként
+            if (player === 1) {
+                if (now - lastInputTime1 < debounceInterval) return;
+                lastInputTime1 = now;
+            } else {
+                if (now - lastInputTime2 < debounceInterval) return;
+                lastInputTime2 = now;
+            }
+
+            // Ha túl kicsi a velocity (véletlen érintés), hagyjuk figyelmen kívül
+            if (e.rawVelocity < 10) return; 
+
             handleInput(player, e.note.identifier, e.rawVelocity);
         });
     }
 });
 
 function handleInput(player, playedNote, velocity) {
-    let currentIndex = player === 1 ? p1Index : p2Index;
-    if (currentIndex >= songNotes.length) return;
-
+    if (!raceActive) return;
+    const lane = document.getElementById(`lane-${player}`);
+    const currentIndex = player === 1 ? p1Index : p2Index;
     const targetNote = songNotes[currentIndex].name;
 
     if (playedNote === targetNote) {
-        const points = Math.round(velocity + 100);
+        // HELYES ÜTÉS
+        lane.classList.add('flash-correct');
+        setTimeout(() => lane.classList.remove('flash-correct'), 150);
+        
+        // Pontozás: sebesség (velocity) + bónusz a gyorsaságért
+        const points = Math.round(velocity * 1.5 + 50);
+        
         if (player === 1) {
             p1Score += points;
             p1Index++;
@@ -169,12 +214,10 @@ function handleInput(player, playedNote, velocity) {
             document.getElementById('score-2').innerText = p2Score;
             if (p2Index < songNotes.length) drawNote("staff-p2", songNotes[p2Index].name);
         }
-        
-        // Ellenőrizzük, vége van-e
-        if (p1Index >= songNotes.length || p2Index >= songNotes.length) {
-            raceActive = false;
-            showWinner();
-        }
+    } else {
+        // ROSSZ ÜTÉS
+        lane.classList.add('flash-wrong');
+        setTimeout(() => lane.classList.remove('flash-wrong'), 150);
     }
 }
 

@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="hu">
+<head>
+    <meta charset="UTF-8">
+    <title>Boci-Boci Ujjrend Küldetés 🐮</title>
+    <script src="https://cdn.jsdelivr.net/npm/vexflow@4.2.2/build/cjs/vexflow.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/webmidi@3.1.6/dist/iife/webmidi.iife.js"></script>
+    <style>
+        body { background: #1a1a1a; color: white; font-family: 'Segoe UI', sans-serif; text-align: center; }
+        #game-container { background: #2d2d2d; padding: 30px; border-radius: 20px; display: inline-block; margin-top: 50px; box-shadow: 0 0 30px rgba(0,0,0,0.5); }
+        #staff { background: white; padding: 20px; border-radius: 10px; margin: 20px 0; }
+        .finger-hint { font-size: 3rem; color: #f1c40f; font-weight: bold; margin-bottom: 10px; }
+        .note-name { font-size: 1.5rem; color: #3498db; }
+        #status { font-size: 1.2rem; margin-top: 20px; min-height: 1.5em; }
+        .progress-bar { width: 100%; height: 10px; background: #444; border-radius: 5px; margin-top: 20px; }
+        #progress-fill { width: 0%; height: 100%; background: #2ecc71; border-radius: 5px; transition: width 0.3s; }
+    </style>
+</head>
+<body>
+
+<div id="game-container">
+    <h1>🐮 Boci-Boci Ujjrend Küldetés</h1>
+    <div id="status">Csatlakoztasd a P-45-öt és várj...</div>
+    
+    <div class="finger-hint">Ujj: <span id="target-finger">-</span></div>
+    <div id="staff"></div>
+    <div class="note-name">Hang: <span id="target-note">-</span></div>
+
+    <div class="progress-bar"><div id="progress-fill"></div></div>
+</div>
+
+<script>
+// 1. A BOCI-BOCI TARKA ADATAI (Hang és a javasolt ujj)
+// C4=1 (Hüvelyk), E4=3 (Középső), G4=5 (Kisujj)
+const bociSong = [
+    { note: "C4", finger: 1 }, { note: "E4", finger: 3 }, { note: "C4", finger: 1 }, { note: "E4", finger: 3 }, // Bo-ci bo-ci
+    { note: "G4", finger: 5 }, { note: "G4", finger: 5 },                                                 // tar-ka
+    { note: "C4", finger: 1 }, { note: "E4", finger: 3 }, { note: "C4", finger: 1 }, { note: "E4", finger: 3 }, // Se fü-le se
+    { note: "G4", finger: 5 }, { note: "G4", finger: 5 }                                                  // far-ka
+];
+
+let currentIndex = 0;
+
+// 2. KOTTA RAJZOLÁSA
+function drawNote(noteName) {
+    const container = document.getElementById('staff');
+    container.innerHTML = "";
+    const renderer = new Vex.Flow.Renderer(container, Vex.Flow.Renderer.Backends.SVG);
+    renderer.resize(300, 150);
+    const context = renderer.getContext();
+    const stave = new Vex.Flow.Stave(10, 10, 280);
+    stave.addClef("treble").setContext(context).draw();
+
+    const pitch = noteName.toLowerCase().replace(/(\d+)/, '/$1');
+    const note = new Vex.Flow.StaveNote({ keys: [pitch], duration: "q" });
+    
+    Vex.Flow.Formatter.FormatAndDraw(context, stave, [note]);
+}
+
+// 3. MIDI KEZELÉS
+WebMidi.enable().then(() => {
+    const status = document.getElementById('status');
+    if (WebMidi.inputs.length > 0) {
+        status.innerText = "Mehet a játék! Használd a helyes ujjad!";
+        status.style.color = "#2ecc71";
+        
+        const input = WebMidi.inputs[0];
+        input.addListener("noteon", e => {
+            checkNote(e.note.identifier);
+        });
+        
+        updateGame();
+    } else {
+        status.innerText = "Nincs MIDI eszköz! Csatlakoztasd a zongorát.";
+    }
+});
+
+// 4. JÁTÉK LOGIKA
+function checkNote(playedNote) {
+    if (currentIndex >= bociSong.length) return;
+
+    const target = bociSong[currentIndex];
+    
+    if (playedNote === target.note) {
+        currentIndex++;
+        if (currentIndex < bociSong.length) {
+            updateGame();
+        } else {
+            finishGame();
+        }
+    } else {
+        // Hiba esetén villanjon meg a kijelző
+        document.body.style.background = "#4c1a1a";
+        setTimeout(() => document.body.style.background = "#1a1a1a", 100);
+    }
+}
+
+function updateGame() {
+    const target = bociSong[currentIndex];
+    document.getElementById('target-finger').innerText = target.finger;
+    document.getElementById('target-note').innerText = target.note;
+    document.getElementById('progress-fill').style.width = (currentIndex / bociSong.length * 100) + "%";
+    drawNote(target.note);
+}
+
+function finishGame() {
+    document.getElementById('game-container').innerHTML = "<h1>Küldetés Teljesítve! 🏆</h1><p>Ügyesen használtad az ujjaidat!</p><button onclick='location.reload()'>Újra</button>";
+    document.body.style.background = "#1a4c1a";
+}
+
+</script>
+</body>
+</html>

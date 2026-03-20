@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="hu">
+<head>
+    <meta charset="UTF-8">
+    <title>Süss fel Nap - Ujjrend Akadémia ☀️</title>
+    <script src="https://cdn.jsdelivr.net/npm/vexflow@4.2.2/build/cjs/vexflow.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/webmidi@3.1.6/dist/iife/webmidi.iife.js"></script>
+    <style>
+        body { background: #1a1a1a; color: white; font-family: 'Segoe UI', sans-serif; text-align: center; }
+        #game-container { background: #2d2d2d; padding: 30px; border-radius: 20px; display: inline-block; margin-top: 50px; border: 4px solid #f1c40f; }
+        #staff { background: white; padding: 20px; border-radius: 10px; margin: 20px 0; }
+        .finger-hint { font-size: 4rem; color: #f1c40f; font-weight: bold; }
+        .instruction { font-size: 1.2rem; color: #aaa; margin-bottom: 10px; }
+        #progress-container { width: 100%; height: 20px; background: #444; border-radius: 10px; margin-top: 20px; overflow: hidden; }
+        #progress-fill { width: 0%; height: 100%; background: linear-gradient(90deg, #f1c40f, #e67e22); transition: width 0.2s; }
+    </style>
+</head>
+<body>
+
+<div id="game-container">
+    <h1>☀️ Süss fel Nap - Küldetés</h1>
+    <p class="instruction">Helyezd az 5 ujjad a C-D-E-F-G billentyűkre!</p>
+    
+    <div class="finger-hint">Használd ezt az ujjad: <span id="target-finger">-</span></div>
+    
+    <div id="staff"></div>
+    
+    <div style="font-size: 1.5rem;">Következő hang: <strong id="target-note" style="color:#3498db">-</strong></div>
+
+    <div id="progress-container"><div id="progress-fill"></div></div>
+    <div id="status" style="margin-top:15px; color:#2ecc71;">Várakozás a Yamaha P-45-re...</div>
+</div>
+  <a href="ujjrend.html" class="menu-card">
+            <div class="icon">👐</div>
+            <div class="title">Vissza</div>
+            <div class="piano-keys">
+                <div class="key white"></div><div class="key black"></div>
+                <div class="key white"></div><div class="key black"></div>
+                <div class="key white"></div><div class="key white"></div>
+            </div>
+        </a>
+
+<script>
+// SÜSS FEL NAP ADATAI
+// C4=1, D4=2, E4=3, F4=4, G4=5
+const sussFelNap = [
+    { note: "C4", finger: 1 }, { note: "C4", finger: 1 }, { note: "C4", finger: 1 }, { note: "C4", finger: 1 }, // Süss fel nap
+    { note: "G4", finger: 5 }, { note: "G4", finger: 5 }, { note: "G4", finger: 5 }, { note: "G4", finger: 5 }, // Fényes nap
+    { note: "C4", finger: 1 }, { note: "D4", finger: 2 }, { note: "E4", finger: 3 }, { note: "F4", finger: 4 }, // Kertek alatt
+    { note: "G4", finger: 5 }, { note: "G4", finger: 5 }, { note: "G4", finger: 5 }, { note: "G4", finger: 5 }  // a ludaink...
+];
+
+let currentIndex = 0;
+
+function drawNote(noteName) {
+    const container = document.getElementById('staff');
+    container.innerHTML = "";
+    const renderer = new Vex.Flow.Renderer(container, Vex.Flow.Renderer.Backends.SVG);
+    renderer.resize(300, 150);
+    const context = renderer.getContext();
+    const stave = new Vex.Flow.Stave(10, 10, 280);
+    stave.addClef("treble").setContext(context).draw();
+
+    const pitch = noteName.toLowerCase().replace(/(\d+)/, '/$1');
+    const note = new Vex.Flow.StaveNote({ keys: [pitch], duration: "q" });
+    Vex.Flow.Formatter.FormatAndDraw(context, stave, [note]);
+}
+
+WebMidi.enable().then(() => {
+    if (WebMidi.inputs.length > 0) {
+        document.getElementById('status').innerText = "Készen állunk! Indulhat a dal.";
+        const input = WebMidi.inputs[0];
+        input.addListener("noteon", e => {
+            if (currentIndex < sussFelNap.length) {
+                if (e.note.identifier === sussFelNap[currentIndex].note) {
+                    currentIndex++;
+                    if (currentIndex < sussFelNap.length) {
+                        updateUI();
+                    } else {
+                        victory();
+                    }
+                } else {
+                    flashError();
+                }
+            }
+        });
+        updateUI();
+    }
+});
+
+function updateUI() {
+    const current = sussFelNap[currentIndex];
+    document.getElementById('target-finger').innerText = current.finger;
+    document.getElementById('target-note').innerText = current.note;
+    document.getElementById('progress-fill').style.width = (currentIndex / sussFelNap.length * 100) + "%";
+    drawNote(current.note);
+}
+
+function flashError() {
+    document.body.style.background = "#662222";
+    setTimeout(() => document.body.style.background = "#1a1a1a", 150);
+}
+
+function victory() {
+    document.getElementById('game-container').innerHTML = "<h1>Küldetés Teljesítve! ☀️🏆</h1><p>Gratulálok! Ma már két dalt is megtanultál!</p><button onclick='location.reload()' style='padding:10px 20px; cursor:pointer;'>Újra játszom</button>";
+    document.body.style.background = "#1a4c1a";
+}
+</script>
+</body>
+</html>

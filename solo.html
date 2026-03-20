@@ -30,6 +30,25 @@
             text-align: center;
         }
 
+        #note-name-display {
+    font-size: 5rem;
+    font-weight: bold;
+    color: #f1c40f; /* Sárga, hogy elváljon a kottától */
+    margin-top: -30px;
+    text-shadow: 2px 2px 10px rgba(0,0,0,0.5);
+}
+
+#hard-mode-btn {
+    margin-top: 10px;
+    padding: 8px 15px;
+    background: #444;
+    color: white;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+}
+#hard-mode-btn.active { background: #e74c3c; }
+
         .controls {
             margin-bottom: 20px;
             padding: 15px;
@@ -118,6 +137,9 @@
                 <span id="check-mark"></span>
             </div>
         </div>
+        <button id="hard-mode-btn" onclick="this.classList.toggle('active'); hardMode = !hardMode; drawStaff(songNotes[currentIndex].name);">
+    Hard Mode (Betűk elrejtése)
+</button>
 
         <p>Leütés ereje (Velocity): <span id="velo-text">0</span></p>
         <div class="velocity-meter">
@@ -157,65 +179,65 @@ document.getElementById('midi-upload').addEventListener('change', async (e) => {
     reader.readAsArrayBuffer(file);
 });
 
-// --- 3. KOTTA RAJZOLÁSA (VexFlow) ---
+// --- GLOBÁLISVÁLTOZÓK BŐVÍTÉSE ---
+let hardMode = false;
+let lastInputTime = 0;
+const debounceInterval = 50; // 50ms védelem
+
+// --- KOTTA RAJZOLÁSA + BETŰS SEGÍTSÉG ---
 function drawStaff(noteName) {
     const container = document.getElementById('staff-container');
-    container.innerHTML = ""; // Előző kotta törlése
+    container.innerHTML = ""; 
 
+    // 1. Kotta rajzolása
     const renderer = new VexFlow.Renderer(container, VexFlow.Renderer.Backends.SVG);
-    renderer.resize(400, 200);
+    renderer.resize(400, 220); // Kicsit magasabb helyet hagyunk
     const context = renderer.getContext();
-
-    // Kottavonal létrehozása
     const stave = new VexFlow.Stave(50, 40, 300);
     stave.addClef("treble").setContext(context).draw();
 
-    // VexFlow formátum konverzió: pl. "C4" -> "c/4"
     const pitch = noteName.toLowerCase().replace(/(\d+)/, '/$1');
-    
-    // Hangjegy létrehozása
-    const note = new VexFlow.StaveNote({
-        keys: [pitch],
-        duration: "q", // negyed hang
-        auto_stem: true
-    });
+    const note = new VexFlow.StaveNote({ keys: [pitch], duration: "q", auto_stem: true });
 
-    // Ha van kereszt vagy bé (pl. C#4), azt külön hozzá kell adni
-    if (noteName.includes("#")) {
-        note.addModifier(new VexFlow.Accidental("#"), 0);
-    } else if (noteName.includes("b")) {
-        note.addModifier(new VexFlow.Accidental("b"), 0);
-    }
+    if (noteName.includes("#")) note.addModifier(new VexFlow.Accidental("#"), 0);
+    if (noteName.includes("b")) note.addModifier(new VexFlow.Accidental("b"), 0);
 
-    // Hangjegy elhelyezése a kottán
     const voice = new VexFlow.Voice({ num_beats: 1, beat_value: 4 });
     voice.addTickables([note]);
-
     new VexFlow.Formatter().joinVoices([voice]).format([voice], 200);
     voice.draw(context, stave);
+
+    // 2. VIZUÁLIS MANKÓ: Betű kiírása (Ha nincs Hard Mode)
+    if (!hardMode) {
+        const letterDiv = document.createElement("div");
+        letterDiv.id = "note-name-display";
+        // Csak a betűt írjuk ki, pl. C#4 -> C#
+        letterDiv.innerText = noteName.replace(/\d+/, ""); 
+        container.appendChild(letterDiv);
+    }
 }
 
-// --- 4. YAMAHA P-45 (MIDI INPUT) KEZELÉSE ---
+// --- MIDI INPUT DEBOUNCINGGAL ---
 WebMidi.enable().then(() => {
     const statusText = document.getElementById('connection-status');
-
     if (WebMidi.inputs.length > 0) {
-        // Megkeressük a P-45-öt, vagy az első elérhető eszközt
         const piano = WebMidi.inputs.find(i => i.name.includes("P-45")) || WebMidi.inputs[0];
-        statusText.innerText = "Hangszer csatlakoztatva: " + piano.name;
+        statusText.innerText = "Hangszer: " + piano.name;
         statusText.style.color = "#2ecc71";
 
         piano.addListener("noteon", e => {
-            const playedNote = e.note.identifier; // pl. "C4"
-            const velocity = Math.round(e.rawVelocity); // 0-127
-            
-            handleInput(playedNote, velocity);
+            const now = performance.now();
+            // Ha túl gyorsan jönnek a jelek (püfölés/prell), eldobjuk
+            if (now - lastInputTime < debounceInterval) return;
+            lastInputTime = now;
+
+            // Nagyon halk leütést (véletlen érintés) figyelmen kívül hagyunk
+            if (e.rawVelocity < 5) return;
+
+            handleInput(e.note.identifier, Math.round(e.rawVelocity));
         });
-    } else {
-        statusText.innerText = "Nincs MIDI eszköz. Csatlakoztasd a P-45-öt!";
-        statusText.style.color = "#e74c3c";
     }
-}).catch(err => console.error("WebMidi hiba:", err));
+});
 
 // --- 5. LOGIKA: ELLENŐRZÉS ÉS TOVÁBBLÉPÉS ---
 function handleInput(playedNote, velocity) {
