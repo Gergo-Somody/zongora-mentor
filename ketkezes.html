@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="hu">
+<head>
+    <meta charset="UTF-8">
+    <title>P-45 - Kétkezes Mentor (STABIL)</title>
+    <script src="https://cdn.jsdelivr.net/npm/vexflow@4.2.2/build/cjs/vexflow.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/webmidi@3.1.6/dist/iife/webmidi.iife.js"></script>
+    <script src="https://unpkg.com/@tonejs/midi"></script>
+    <style>
+        body { background: #1a1a1a; color: white; font-family: sans-serif; text-align: center; margin: 0; padding: 20px; }
+        #staff-container { 
+            background: white; padding: 40px; border-radius: 15px; 
+            display: inline-block; position: relative; margin-top: 20px;
+            box-shadow: 0 0 50px rgba(0,0,0,0.5);
+        }
+        #cursor {
+            position: absolute; width: 35px; height: 280px;
+            background-color: rgba(52, 152, 219, 0.3); border-radius: 5px;
+            border: 2px solid #3498db; top: 60px; left: 0;
+            transition: all 0.2s ease; display: none; pointer-events: none;
+        }
+        .status-bar { margin: 15px; font-size: 1.2rem; color: #f1c40f; }
+    </style>
+</head>
+<body>
+    <h1>🎹 Kétkezes Gyakorlás</h1>
+    
+    <div style="background: #333; padding: 15px; border-radius: 10px; display: inline-block;">
+        <input type="file" id="midi-upload">
+        <div class="status-bar" id="status">Tölts be egy MIDI fájlt!</div>
+    </div>
+
+    <br>
+
+    <div id="staff-container">
+        <div id="vexflow-staff"></div>
+        <div id="cursor"></div>
+    </div>
+
+    <script>
+        const VF = Vex.Flow;
+        let rightHandNotes = [], leftHandNotes = [];
+        let currentIndex = 0;
+        let noteXPositions = [];
+
+        document.getElementById('midi-upload').addEventListener('change', async (e) => {
+            const file = e.target.files[0];
+            const reader = new FileReader();
+            reader.onload = async (event) => {
+                const midi = new Midi(event.target.result);
+                const keySig = midi.header.keySignatures?.[0]?.key || "C";
+                
+                const t0 = midi.tracks[0]?.notes || [];
+                const t1 = midi.tracks[1]?.notes || [];
+
+                if (t1.length === 0) {
+                    rightHandNotes = t0.filter(n => n.midi >= 60);
+                    leftHandNotes = t0.filter(n => n.midi < 60);
+                } else {
+                    rightHandNotes = t0;
+                    leftHandNotes = t1;
+                }
+
+                currentIndex = 0;
+                drawGrandMeasures(keySig);
+                document.getElementById('status').innerText = "Betöltve! Üsd le az első hangot.";
+            };
+            reader.readAsArrayBuffer(file);
+        });
+
+    function drawGrandMeasures(keySig) {
+            const container = document.getElementById('vexflow-staff');
+            container.innerHTML = "";
+            noteXPositions = [];
+
+            const renderer = new VF.Renderer(container, VF.Renderer.Backends.SVG);
+            renderer.resize(750, 380);
+            const context = renderer.getContext();
+
+            // 1. Kottasorok rajzolása
+            const staveX = 100; // Fix kezdőpont
+            const trebleStave = new VF.Stave(staveX, 40, 600).addClef("treble").addKeySignature(keySig).setContext(context).draw();
+            const bassStave = new VF.Stave(staveX, 180, 600).addClef("bass").addKeySignature(keySig).setContext(context).draw();
+            new VF.StaveConnector(trebleStave, bassStave).setType(VF.StaveConnector.type.BRACE).setContext(context).draw();
+
+            // 2. Hangjegyek létrehozása
+            const trebleNotes = createVexNotes(rightHandNotes.slice(0, 10), "treble");
+            const bassNotes = createVexNotes(leftHandNotes.slice(0, 10), "bass");
+
+            // 3. Hangok csoportosítása szólamokba
+            const voiceR = new VF.Voice({ num_beats: 10, beat_value: 4 }).setMode(VF.Voice.Mode.SOFT).addTickables(trebleNotes);
+            const voiceL = new VF.Voice({ num_beats: 10, beat_value: 4 }).setMode(VF.Voice.Mode.SOFT).addTickables(bassNotes);
+
+            // 4. Formázás (Itt dől el a vízszintes elhelyezkedés)
+            const formatter = new VF.Formatter().joinVoices([voiceR, voiceL]).format([voiceR, voiceL], 500);
+            
+            // 5. Rajzolás
+            voiceR.draw(context, trebleStave);
+            voiceL.draw(context, bassStave);
+
+            // --- A KRITIKUS RÉSZ: POZÍCIÓK KINYERÉSE ---
+            // Megvárjuk, amíg az SVG ténylegesen bekerül a dokumentumba
+            setTimeout(() => {
+                noteXPositions = [];
+                trebleNotes.forEach(vfn => {
+                    // A tickContext megadja a relatív X-et az ütemen belül, 
+                    // ehhez hozzáadjuk a Stave (kottasor) kezdő X koordinátáját és a belső margót
+                    const x = vfn.getTickContext().getX() + trebleStave.getNoteStartX();
+                    noteXPositions.push(x);
+                });
+
+                if (noteXPositions.length > 0) {
+                    updateCursor(0); // Most már az első hangjegyre fog ugrani
+                }
+            }, 50);
+        }
+
+        function createVexNotes(notes, clef) {
+            return notes.map(n => {
+                const pitch = n.name.toLowerCase().replace(/(\d+)/, '/$1');
+                const vNote = new VF.StaveNote({ keys: [pitch], duration: "q", clef: clef });
+                
+                // Módosítójelek (#/b)
+                if (n.name.includes("#")) vNote.addModifier(new VF.Accidental("#"), 0);
+                if (n.name.includes("b")) vNote.addModifier(new VF.Accidental("b"), 0);
+
+                // SZÁMOK ÉS BETŰK (Annotation)
+                // Itt írjuk ki a hang nevét és az ujjrendet (n.midi % 5 + 1)
+                const fingering = (n.midi % 5) + 1;
+                const label = n.name + " (" + fingering + ")";
+                
+                vNote.addModifier(new VF.Annotation(label)
+                    .setVerticalJustification(clef === "treble" ? VF.Annotation.VerticalJustify.TOP : VF.Annotation.VerticalJustify.BOTTOM)
+                , 0);
+
+                return vNote;
+            });
+        }
+
+        WebMidi.enable().then(() => {
+            const input = WebMidi.inputs.find(i => i.name.includes("P-45")) || WebMidi.inputs[0];
+            if (!input) return;
+            input.addListener("noteon", e => handleInput(e.note.identifier));
+        });
+
+        function handleInput(playedNote) {
+            const targetR = rightHandNotes[currentIndex]?.name;
+            const targetL = leftHandNotes[currentIndex]?.name;
+
+            if (playedNote === targetR || playedNote === targetL) {
+                currentIndex++;
+                if (currentIndex < noteXPositions.length) {
+                    updateCursor(currentIndex);
+                } else {
+                    document.getElementById('status').innerText = "Szakasz vége! 🎉";
+                }
+            }
+        }
+
+function updateCursor(index) {
+            const cursor = document.getElementById('cursor');
+            const x = noteXPositions[index];
+            
+            if (x !== undefined) {
+                cursor.style.display = "block";
+                // A kurzor közepét a hangjegyhez igazítjuk (-17px a kurzor szélességének fele)
+                // A +40px a staff-container belső padding-je miatt kell
+                cursor.style.left = (x + 40 - 17) + "px"; 
+            }
+        }
+    </script>
+</body>
+</html>

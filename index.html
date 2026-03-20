@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="hu">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>P-45 Zongora Mentor - Főmenü</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: 'Segoe UI', sans-serif;
+            background: linear-gradient(135deg, #1a1a1a 0%, #000000 100%);
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            overflow: hidden;
+        }
+
+        h1 {
+            font-size: 3rem;
+            letter-spacing: 5px;
+            margin-bottom: 50px;
+            text-transform: uppercase;
+            background: linear-gradient(to right, #f1c40f, #e67e22);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            text-shadow: 0 10px 20px rgba(0,0,0,0.5);
+        }
+
+        .menu-container {
+            display: flex;
+            gap: 30px;
+        }
+
+        .menu-card {
+            width: 280px;
+            height: 380px;
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            text-decoration: none;
+            color: white;
+            transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            position: relative;
+            backdrop-filter: blur(10px);
+        }
+
+        .menu-card:hover {
+            transform: translateY(-15px);
+            background: rgba(255, 255, 255, 0.1);
+            border-color: #f1c40f;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.6);
+        }
+
+        .icon {
+            font-size: 4rem;
+            margin-bottom: 20px;
+        }
+
+        .title {
+            font-size: 1.5rem;
+            font-weight: bold;
+            margin-bottom: 10px;
+        }
+
+        .description {
+            font-size: 0.9rem;
+            color: #aaa;
+            text-align: center;
+            padding: 0 20px;
+        }
+
+        /* Díszítőelem: Zongorabillentyűk az alján */
+        .piano-keys {
+            position: absolute;
+            bottom: 0;
+            width: 100%;
+            height: 20px;
+            display: flex;
+        }
+        .key { height: 100%; flex: 1; border-right: 1px solid #333; }
+        .white { background: #eee; }
+        .black { background: #111; height: 60%; }
+
+    </style>
+</head>
+<body>
+
+    <h1>Piano Mentor Pro</h1>
+
+    <div class="menu-container">
+        
+        <a href="solo.html" class="menu-card">
+            <div class="icon">👤</div>
+            <div class="title">Szóló Gyakorlás</div>
+            <div class="description">Tanulj a saját tempódban, várd meg a következő hangjegyet.</div>
+            <div class="piano-keys">
+                <div class="key white"></div><div class="key black"></div>
+                <div class="key white"></div><div class="key black"></div>
+                <div class="key white"></div><div class="key white"></div>
+            </div>
+        </a>
+
+        <a href="verseny.html" class="menu-card">
+            <div class="icon">⚔️</div>
+            <div class="title">Párbaj Mód</div>
+            <div class="description">Kétjátékos verseny metronómmal, sebesség- és pontosságméréssel.</div>
+            <div class="piano-keys">
+                <div class="key white"></div><div class="key black"></div>
+                <div class="key white"></div><div class="key black"></div>
+                <div class="key white"></div><div class="key white"></div>
+            </div>
+        </a>
+
+                <a href="ketkezes.html" class="menu-card">
+            <div class="icon">👐</div>
+            <div class="title">Kétkezes mód</div>
+            <div class="description">Kétkezes játék.</div>
+            <div class="piano-keys">
+                <div class="key white"></div><div class="key black"></div>
+                <div class="key white"></div><div class="key black"></div>
+                <div class="key white"></div><div class="key white"></div>
+            </div>
+        </a>
+
+    </div>
+
+    <p style="margin-top: 50px; color: #555; font-size: 0.8rem;">Yamaha P-45 MIDI Engine Active</p>
+
+</body>
+</html>
