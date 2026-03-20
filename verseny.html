@@ -13,19 +13,15 @@
             width: 45%; background: #1e1e1e; padding: 20px; border-radius: 15px;
             border: 3px solid #333; transition: border-color 0.3s;
         }
-        .player-1.active-border { border-color: #3498db; }
-        .player-2.active-border { border-color: #e74c3c; }
-        
-        #staff-p1, #staff-p2 { background: white; border-radius: 8px; margin: 15px 0; }
-        
+        #staff-p1, #staff-p2 { background: white; border-radius: 8px; margin: 15px 0; min-height: 120px; }
         .score-board { font-size: 2rem; font-weight: bold; margin: 20px 0; }
         .timer { font-size: 1.5rem; color: #f1c40f; }
-        
         .winner-overlay {
             position: fixed; top: 0; left: 0; width: 100%; height: 100%;
             background: rgba(0,0,0,0.9); display: none; flex-direction: column;
             justify-content: center; align-items: center; z-index: 100;
         }
+        .controls, .metronome-controls { margin-top: 20px; background: #222; padding: 15px; border-radius: 10px; display: inline-block; }
     </style>
 </head>
 <body>
@@ -35,23 +31,29 @@
     
     <div class="race-track">
         <div id="lane-1" class="player-lane player-1">
-            <h2>Kék Játékos</h2>
+            <h2>Kék Játékos (C4 alatt)</h2>
             <div id="staff-p1"></div>
             <div class="score-board">Pont: <span id="score-1">0</span></div>
             <div id="feedback-1">-</div>
         </div>
 
         <div id="lane-2" class="player-lane player-2">
-            <h2>Piros Játékos</h2>
+            <h2>Piros Játékos (C4 felett)</h2>
             <div id="staff-p2"></div>
             <div class="score-board">Pont: <span id="score-2">0</span></div>
             <div id="feedback-2">-</div>
         </div>
     </div>
 
-    <div class="controls" style="margin-top: 30px;">
-        <input type="file" id="midi-upload">
+    <div class="controls">
+        <input type="file" id="midi-upload" accept=".mid,.midi">
         <button onclick="startRace()" id="start-btn" disabled>Verseny Indítása!</button>
+    </div>
+
+    <div class="metronome-controls">
+        <label>Tempó (BPM): </label>
+        <input type="number" id="bpm-input" value="100" min="40" max="240">
+        <div id="beat-indicator" style="width:20px; height:20px; border-radius:50%; background:gray; display:inline-block; margin-left:10px;"></div>
     </div>
 
     <div id="winner-screen" class="winner-overlay">
@@ -59,72 +61,136 @@
         <button onclick="location.reload()">Új játék</button>
     </div>
 
-    <div class="metronome-controls">
-    <label>Tempó (BPM): </label>
-    <input type="number" id="bpm-input" value="100" min="40" max="240">
-    <div id="beat-indicator" style="width:20px; height:20px; border-radius:50%; background:gray; display:inline-block; margin-left:10px;"></div>
-</div>
-
     <script>
-   // --- GLOBÁLIS VÁLTOZÓK ---
 let songNotes = [];
 let p1Index = 0, p2Index = 0;
 let p1Score = 0, p2Score = 0;
 let raceActive = false;
 let startTime;
-
-// Metronóm változók
 let audioCtx = null;
 let currentBeat = 0;
 let nextNoteTime = 0.0;
 let timerID = null;
 
-// --- A VERSENY INDÍTÁSA (START) ---
-async function startRace() {
-    if (songNotes.length === 0) {
-        alert("Előbb tölts be egy MIDI fájlt!");
-        return;
-    }
+// --- MIDI FÁJL BETÖLTÉSE (Ez hiányzott!) ---
+document.getElementById('midi-upload').addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
 
-    // Audio Context inicializálása (böngésző biztonság miatt kattintásra kell)
+    const reader = new FileReader();
+    reader.onload = async (event) => {
+        const midi = new Midi(event.target.result);
+        // Megkeressük az első sávot, amiben vannak hangjegyek
+        const track = midi.tracks.find(t => t.notes.length > 0);
+        if (track) {
+            songNotes = track.notes;
+            document.getElementById('start-btn').disabled = false;
+            document.getElementById('status-info')?.remove();
+            // Kirajzoljuk az első hangokat kezdésnek
+            drawNote("staff-p1", songNotes[0].name);
+            drawNote("staff-p2", songNotes[0].name);
+            alert("MIDI betöltve! Nyomhatod a Startot.");
+        }
+    };
+    reader.readAsArrayBuffer(file);
+});
+
+// --- KOTTA RAJZOLÁSA ---
+function drawNote(divId, noteName) {
+    const container = document.getElementById(divId);
+    container.innerHTML = "";
+    const renderer = new Vex.Flow.Renderer(container, Vex.Flow.Renderer.Backends.SVG);
+    renderer.resize(300, 120);
+    const context = renderer.getContext();
+    const stave = new Vex.Flow.Stave(10, 0, 280);
+    stave.addClef("treble").setContext(context).draw();
+    
+    const pitch = noteName.toLowerCase().replace(/(\d+)/, '/$1');
+    const note = new Vex.Flow.StaveNote({ keys: [pitch], duration: "q" });
+    if(noteName.includes("#")) note.addModifier(new Vex.Flow.Accidental("#"), 0);
+
+    Vex.Flow.Formatter.FormatAndDraw(context, stave, [note]);
+}
+
+// --- VERSENY INDÍTÁSA ---
+async function startRace() {
+    if (songNotes.length === 0) return;
     if (audioCtx === null) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
     
     document.getElementById('start-btn').disabled = true;
-    document.getElementById('feedback-1').innerText = "Készülj...";
-    document.getElementById('feedback-2').innerText = "Készülj...";
-
-    // 1. Metronóm indítása
+    
+    // Beszámolás
     currentBeat = 0;
     nextNoteTime = audioCtx.currentTime + 0.05;
     scheduler(); 
 
-    // 2. Beszámolás (pl. 4 ütés várakozás a BPM alapján)
     const bpm = document.getElementById('bpm-input').value;
     const msPerBeat = (60 / bpm) * 1000;
     
     setTimeout(() => {
-        // 3. Tényleges verseny kezdete
         p1Index = 0; p2Index = 0;
         p1Score = 0; p2Score = 0;
-        p1Results = []; p2Results = [];
-        
         raceActive = true;
         startTime = performance.now();
-        
-        document.getElementById('feedback-1').innerText = "RAJT!";
-        document.getElementById('feedback-2').innerText = "RAJT!";
-        
-        updateTimer(); // Az óra elindítása
+        updateTimer();
     }, msPerBeat * 4); 
 }
 
-// --- METRONÓM MOTOR ---
+// --- MIDI INPUT ÉS LOGIKA ---
+WebMidi.enable().then(() => {
+    if (WebMidi.inputs.length > 0) {
+        const input = WebMidi.inputs[0];
+        input.addListener("noteon", e => {
+            if (!raceActive) return;
+            
+            // Split: C4 (60) alatt Kék, felette Piros
+            const player = e.note.number < 60 ? 1 : 2;
+            handleInput(player, e.note.identifier, e.rawVelocity);
+        });
+    }
+});
+
+function handleInput(player, playedNote, velocity) {
+    let currentIndex = player === 1 ? p1Index : p2Index;
+    if (currentIndex >= songNotes.length) return;
+
+    const targetNote = songNotes[currentIndex].name;
+
+    if (playedNote === targetNote) {
+        const points = Math.round(velocity + 100);
+        if (player === 1) {
+            p1Score += points;
+            p1Index++;
+            document.getElementById('score-1').innerText = p1Score;
+            if (p1Index < songNotes.length) drawNote("staff-p1", songNotes[p1Index].name);
+        } else {
+            p2Score += points;
+            p2Index++;
+            document.getElementById('score-2').innerText = p2Score;
+            if (p2Index < songNotes.length) drawNote("staff-p2", songNotes[p2Index].name);
+        }
+        
+        // Ellenőrizzük, vége van-e
+        if (p1Index >= songNotes.length || p2Index >= songNotes.length) {
+            raceActive = false;
+            showWinner();
+        }
+    }
+}
+
+function showWinner() {
+    const screen = document.getElementById('winner-screen');
+    const text = document.getElementById('winner-text');
+    screen.style.display = "flex";
+    text.innerText = p1Score > p2Score ? "KÉK JÁTÉKOS GYŐZÖTT! 🏆" : "PIROS JÁTÉKOS GYŐZÖTT! 🏆";
+}
+
+// --- METRONÓM ÉS IDŐZÍTŐ ---
 function scheduler() {
+    if (audioCtx.state === 'suspended') audioCtx.resume();
     const bpm = document.getElementById('bpm-input').value;
     const secondsPerBeat = 60.0 / bpm;
-    const scheduleAheadTime = 0.1;
-
-    while (nextNoteTime < audioCtx.currentTime + scheduleAheadTime) {
+    while (nextNoteTime < audioCtx.currentTime + 0.1) {
         playMetronomeClick(currentBeat, nextNoteTime);
         nextNoteTime += secondsPerBeat;
         currentBeat++;
@@ -135,25 +201,21 @@ function scheduler() {
 function playMetronomeClick(beat, time) {
     const osc = audioCtx.createOscillator();
     const gain = audioCtx.createGain();
-
-    osc.frequency.value = (beat % 4 === 0) ? 880 : 440; // Az ütem eleje magasabb
+    osc.frequency.value = (beat % 4 === 0) ? 880 : 440;
     gain.gain.exponentialRampToValueAtTime(0.01, time + 0.1);
-
     osc.connect(gain);
     gain.connect(audioCtx.destination);
-
     osc.start(time);
     osc.stop(time + 0.1);
-
-    // Vizuális villanás a HTML-ben
     setTimeout(() => {
         const dot = document.getElementById('beat-indicator');
-        dot.style.background = (beat % 4 === 0) ? "#f1c40f" : "#2ecc71";
-        setTimeout(() => dot.style.background = "gray", 100);
+        if(dot) {
+            dot.style.background = (beat % 4 === 0) ? "#f1c40f" : "#2ecc71";
+            setTimeout(() => dot.style.background = "gray", 100);
+        }
     }, (time - audioCtx.currentTime) * 1000);
 }
 
-// --- IDŐZÍTŐ FRISSÍTÉSE ---
 function updateTimer() {
     if (!raceActive) return;
     const elapsed = (performance.now() - startTime) / 1000;
