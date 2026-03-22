@@ -47,9 +47,9 @@
     <div class="controls">
         <select id="song-select" onchange="loadSelectedSong()">
             <option value="">-- Válassz dalt --</option>
-            <option value="midi/tempo/boci_boci_2_4.mid">1. Boci-boci tarka</option>
+            <option value="midi/tempo/boci_boci.mid">1. Boci-boci tarka</option>
             <option value="midi/tempo/suss_fel_nap.mid">2. Süss fel nap</option>
-            <option value="midi/tempo/hull_a_pelyhes_2_4.mid">3. Hull a pelyhes fehér hó</option>
+            <option value="midi/tempo/hull_a_pelyhes.mid">3. Hull a pelyhes fehér hó</option>
             <option value="midi/tempo/star_wars.mid">4. Star Wars Theme</option>
             <option value="midi/tempo/oromoda.mid">5. Örömóda</option>
             <option value="midi/tempo/hull_a_szilva.mid">7. Hull a szilva</option>
@@ -110,25 +110,18 @@ function drawFullStaff() {
     const container = document.getElementById('staff');
     container.innerHTML = "";
     
-    // 1. BEÁLLÍTÁSOK: Soronkénti hangok száma és a BPM alapú ritmus-idő
     const notesPerLine = 12;
     const lineCount = Math.ceil(songNotes.length / notesPerLine);
     
-    // Kiszámoljuk egy negyedhang (tá) hosszát másodpercben a megadott BPM alapján
-    // 60 BPM-nél ez 1 mp, 50-nél 1.2 mp, 120-nál 0.5 mp.
-    const quarterNoteRef = 60 / bpm; 
-
     const renderer = new VF.Renderer(container, VF.Renderer.Backends.SVG);
-    // Megnövelt sormagasság (200px), hogy elférjenek a feliratok
+    // Megnöveltük a sorok közti helyet 150 -> 200-ra
     renderer.resize(950, lineCount * 200); 
     const context = renderer.getContext();
 
     for (let line = 0; line < lineCount; line++) {
-        // A függőleges eltolás (y) 180px, +80px margó a betűknek a sor felett
-        const yPos = (line * 180) + 80;
-        const stave = new VF.Stave(50, yPos, 850);
+        // A 40 -> 80-ra módosítva: ez ad helyet a magas hangok betűinek
+        const stave = new VF.Stave(50, (line * 180) + 60, 850); 
         
-        // Csak az első sorba teszünk kulcsot és ütemjelzést
         if (line === 0) {
             stave.addClef("treble").addTimeSignature(`${timeSignature.num}/${timeSignature.den}`);
         }
@@ -140,58 +133,30 @@ function drawFullStaff() {
 
         for (let i = startIdx; i < endIdx; i++) {
             const n = songNotes[i];
-            
-            // --- RITMUS-DETEKTÁLÁS (BPM-RE SZABVA) ---
-            // Ha a hang rövidebb, mint a negyedhang 75%-a -> Nyolcad (8)
-            // Ha hosszabb, mint a negyedhang 150%-a -> Félhang (h)
-            // Minden más -> Negyed (q)
-            let dur = "q";
-            if (n.duration < quarterNoteRef * 0.75) {
-                dur = "8";
-            } else if (n.duration > quarterNoteRef * 1.5) {
-                dur = "h";
-            }
-
             const pitch = n.name.toLowerCase().replace(/(\d+)/, '/$1');
+            const dur = (n.duration < 0.25) ? "8" : "q";
             const vexNote = new VF.StaveNote({ keys: [pitch], duration: dur });
             
-            // Betűjel hozzáadása (C, D, E...) - nagyobb betűméret és fix hely
+            // Annotation (betűjel) pozíciója fixálva
             vexNote.addModifier(new VF.Annotation(n.name.replace(/\d+/,"")).setFont("Arial", 14, "bold"), 0);
             
-            // Módosítójel (kereszt) kezelése
             if (n.name.includes("#")) vexNote.addModifier(new VF.Accidental("#"), 0);
             
-            // Kék kijelölés és Auto-Scroll vezérlés
             if (i === currentIndex) {
                 vexNote.setStyle({ fillStyle: "#3498db", strokeStyle: "#3498db" });
-                // Automatikus görgetés az aktuális sorhoz
+                // --- AUTO-SCROLL LOGIKA ---
                 scrollToActiveLine(line);
             }
             lineNotes.push(vexNote);
         }
 
         if (lineNotes.length > 0) {
-            // A hangjegyek elhelyezése a sorban (szellős elrendezés)
             const voice = new VF.Voice({ num_beats: lineNotes.length, beat_value: 4 }).setStrict(false);
             voice.addTickables(lineNotes);
             new VF.Formatter().joinVoices([voice]).format([voice], 750);
             voice.draw(context, stave);
         }
     }
-}
-
-// Kiegészítő funkció a finom görgetéshez
-function scrollToActiveLine(lineIndex) {
-    const scrollContainer = document.getElementById('staff-scroll-container');
-    if (!scrollContainer) return;
-
-    const lineHeight = 180; // A sorok közötti távolság a kódban
-    const targetY = lineIndex * lineHeight;
-    
-    scrollContainer.scrollTo({
-        top: targetY,
-        behavior: 'smooth'
-    });
 }
 
 // Hang és Játék logika
