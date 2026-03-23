@@ -2,19 +2,16 @@
 <html lang="hu">
 <head>
     <meta charset="UTF-8">
-    <title>P-45 Piano Mentor v9.0 - Teljes Kotka</title>
+    <title>P-45 Mentor ZaliZenegép</title>
     <script src="https://unpkg.com/@tonejs/midi"></script>
     <script src="https://cdn.jsdelivr.net/npm/vexflow@4.2.2/build/cjs/vexflow.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/webmidi@3.1.6/dist/iife/webmidi.iife.js"></script>
     <style>
         body { background: #121212; color: white; font-family: 'Segoe UI', sans-serif; text-align: center; margin: 0; padding: 10px; }
-        
-        #sheet-image-container { position: fixed; top: 10px; left: 10px; width: 300px; border: 2px solid #444; background: #fff; padding: 5px; border-radius: 8px; z-index: 100; display: none; box-shadow: 0 4px 10px rgba(0,0,0,0.5); }
-        #sheet-image-container img { width: 100%; height: auto; border-radius: 4px; }
-
+        #sheet-image-container { position: fixed; top: 10px; left: 10px; width: 300px; border: 2px solid #444; background: #fff; padding: 5px; border-radius: 8px; z-index: 100; display: none; }
         #ui-container { max-width: 1200px; margin: 0 auto; }
         
-        /* A kotta terület görgethető, ha túl hosszú lenne */
+        /* A kotta konténerén belül mozog majd a labda canvas-e */
         #staff-scroll-container { 
             background: white; 
             padding: 20px; 
@@ -23,7 +20,19 @@
             width: 1000px; 
             max-height: 70vh; 
             overflow-y: auto; 
+            position: relative;
             box-shadow: 0 10px 40px rgba(0,0,0,0.8); 
+        }
+
+        #staff { position: relative; z-index: 10; }
+        
+        /* A labda Canvas-e átlátszó és a kotta felett van */
+        #ballCanvas { 
+            position: absolute; 
+            top: 0; 
+            left: 0; 
+            pointer-events: none; 
+            z-index: 20; 
         }
 
         .controls { background: #222; padding: 12px; border-radius: 10px; display: inline-block; margin: 5px; border: 1px solid #444; }
@@ -38,15 +47,16 @@
 </head>
 <body>
 
-<div id="sheet-image-container"><img id="target-sheet-img" src="" alt="Eredeti"></div>
+<div id="sheet-image-container"><img id="target-sheet-img" src="" alt="Eredeti" style="width:100%"></div>
 <div id="countdown">3</div>
 
 <div id="ui-container">
-    <h1>🎹 P-45 ZaliZenegép</h1>
+    <h1>🎹 P-45 Zenegép v9.2</h1>
 
     <div class="controls">
         <select id="song-select" onchange="loadSelectedSong()">
             <option value="">-- Válassz dalt --</option>
+      <option value="">-- Válassz dalt --</option>
             <option value="midi/tempo/boci_boci_2_4.mid">1. Boci-boci tarka</option>
             <option value="midi/tempo/suss_fel_nap.mid">2. Süss fel nap</option>
             <option value="midi/tempo/hull_a_pelyhes_2_4.mid">3. Hull a pelyhes fehér hó</option>
@@ -55,7 +65,7 @@
             <option value="midi/tempo/hull_a_szilva.mid">7. Hull a szilva</option>
             <option value="midi/tempo/megy_a_gozos.mid">8. Megy a gőzös</option>
             <option value="midi/tempo/harry_potter_hedwig_3_8.mid">9. Harry Potter</option>
-               <option value="midi/tempo/elmentem_a_piacra.mid">10. Elmentem a piacra</option>
+            <option value="midi/tempo/elmentem_a_piacra.mid">10. Elmentem a piacra</option>
         </select>
         <label> BPM: <input type="number" id="bpm" value="80" style="width: 50px;"></label>
         <button class="btn-play" id="btn-demo" disabled onclick="playOnlyDemo()">MINTA (DEMO)</button>
@@ -66,6 +76,7 @@
     <div id="msg">Tölts be egy dalt!</div>
     
     <div id="staff-scroll-container">
+        <canvas id="ballCanvas"></canvas>
         <div id="staff"></div>
     </div>
 </div>
@@ -77,17 +88,13 @@ const freqs = { "C3":130.81, "D3":146.83, "E3":164.81, "F3":174.61, "G3":196.00,
 let songNotes = [], currentIndex = 0, bpm = 80;
 let isRunning = false, raceActive = false, audioCtx = null;
 let timeSignature = { num: 4, den: 4 };
+let notePositions = []; // Eltároljuk a hangok koordinátáit a labdához
 
-// MIDI beolvasás
 async function loadSelectedSong() {
     const path = document.getElementById('song-select').value;
     if (!path) return;
-
-    // Ütem kiolvasása név alapján
     const match = path.match(/(\d+)_(\d+)\.mid$/);
     timeSignature = match ? { num: parseInt(match[1]), den: parseInt(match[2]) } : { num: 4, den: 4 };
-
-    // Kép kezelése
     const imgEl = document.getElementById('target-sheet-img');
     imgEl.src = path.replace('.mid', '.png');
     imgEl.onload = () => document.getElementById('sheet-image-container').style.display = "block";
@@ -99,8 +106,7 @@ async function loadSelectedSong() {
         if (track) {
             songNotes = track.notes;
             document.querySelectorAll('#btn-demo, #btn-game').forEach(b => b.disabled = false);
-            document.getElementById('msg').innerText = "Kotta betöltve!";
-            currentIndex = -1; // Kezdetben nincs kijelölve semmi
+            currentIndex = -1;
             drawFullStaff();
         }
     } catch (e) { document.getElementById('msg').innerText = "Hiba a MIDI betöltésekor!"; }
@@ -109,92 +115,124 @@ async function loadSelectedSong() {
 function drawFullStaff() {
     const container = document.getElementById('staff');
     container.innerHTML = "";
+    notePositions = []; 
     
-    // 1. BEÁLLÍTÁSOK: Soronkénti hangok száma és a BPM alapú ritmus-idő
-    const notesPerLine = 12;
-    const lineCount = Math.ceil(songNotes.length / notesPerLine);
-    
-    // Kiszámoljuk egy negyedhang (tá) hosszát másodpercben a megadott BPM alapján
-    // 60 BPM-nél ez 1 mp, 50-nél 1.2 mp, 120-nál 0.5 mp.
-    const quarterNoteRef = 60 / bpm; 
-
     const renderer = new VF.Renderer(container, VF.Renderer.Backends.SVG);
-    // Megnövelt sormagasság (200px), hogy elférjenek a feliratok
-    renderer.resize(950, lineCount * 200); 
+    const quarterRef = 60 / bpm;
+    
+    // Előkészítjük az összes hangot VexFlow formátumban
+    let allVexNotes = [];
+    songNotes.forEach((n, i) => {
+        let dur = "q";
+        if (n.duration < quarterRef * 0.75) dur = "8";
+        else if (n.duration > quarterRef * 1.5) dur = "h";
+
+        const pitch = n.name.toLowerCase().replace(/(\d+)/, '/$1');
+        const vexNote = new VF.StaveNote({ keys: [pitch], duration: dur });
+        
+        // Felirat és módosítójel
+        vexNote.addModifier(new VF.Annotation(n.name.replace(/\d+/,"")).setFont("Arial", 12, "bold"), 0);
+        if (n.name.includes("#")) vexNote.addModifier(new VF.Accidental("#"), 0);
+        
+        // Aktuális hang színezése
+        if (i === currentIndex) {
+            vexNote.setStyle({ fillStyle: "#3498db", strokeStyle: "#3498db" });
+        }
+        allVexNotes.push(vexNote);
+    });
+
+    // Ütemekbe rendezés az ütemmutató alapján (pl. 4 negyed egy ütem)
+    const beatsPerBar = timeSignature.num;
+    let measures = [];
+    let currentMeasure = [];
+    let currentBeats = 0;
+
+    allVexNotes.forEach((vn, idx) => {
+        let noteValue = vn.duration === "8" ? 0.5 : (vn.duration === "h" ? 2 : 1);
+        
+        if (currentBeats + noteValue > beatsPerBar) {
+            measures.push(currentMeasure);
+            currentMeasure = [];
+            currentBeats = 0;
+        }
+        currentMeasure.push(vn);
+        currentBeats += noteValue;
+    });
+    if (currentMeasure.length > 0) measures.push(currentMeasure);
+
+    // Kirajzolás soronként (pl. 3 ütem soronként)
+    const measuresPerLine = 3;
+    const lineCount = Math.ceil(measures.length / measuresPerLine);
+    renderer.resize(1000, lineCount * 200);
     const context = renderer.getContext();
 
-    for (let line = 0; line < lineCount; line++) {
-        // A függőleges eltolás (y) 180px, +80px margó a betűknek a sor felett
+    // Labda canvas igazítása
+    const ballCanvas = document.getElementById('ballCanvas');
+    ballCanvas.width = 1000;
+    ballCanvas.height = lineCount * 200;
+
+    measures.forEach((measure, mIdx) => {
+        const line = Math.floor(mIdx / measuresPerLine);
+        const col = mIdx % measuresPerLine;
+        const xPos = 50 + (col * 300);
         const yPos = (line * 180) + 80;
-        const stave = new VF.Stave(50, yPos, 850);
-        
-        // Csak az első sorba teszünk kulcsot és ütemjelzést
-        if (line === 0) {
-            stave.addClef("treble").addTimeSignature(`${timeSignature.num}/${timeSignature.den}`);
-        }
+
+        const stave = new VF.Stave(xPos, yPos, 300);
+        if (col === 0) stave.addClef("treble");
+        if (mIdx === 0) stave.addTimeSignature(`${timeSignature.num}/${timeSignature.den}`);
         stave.setContext(context).draw();
 
-        const startIdx = line * notesPerLine;
-        const endIdx = Math.min(startIdx + notesPerLine, songNotes.length);
-        const lineNotes = [];
+        // Összekötések (Beams) generálása a nyolcadokhoz
+        const beams = VF.Beam.generateBeams(measure);
+        
+        const voice = new VF.Voice({ num_beats: beatsPerBar, beat_value: 4 }).setStrict(false);
+        voice.addTickables(measure);
+        
+        new VF.Formatter().joinVoices([voice]).format([voice], 250);
+        voice.draw(context, stave);
+        beams.forEach(b => b.setContext(context).draw());
 
-        for (let i = startIdx; i < endIdx; i++) {
-            const n = songNotes[i];
-            
-            // --- RITMUS-DETEKTÁLÁS (BPM-RE SZABVA) ---
-            // Ha a hang rövidebb, mint a negyedhang 75%-a -> Nyolcad (8)
-            // Ha hosszabb, mint a negyedhang 150%-a -> Félhang (h)
-            // Minden más -> Negyed (q)
-            let dur = "q";
-            if (n.duration < quarterNoteRef * 0.75) {
-                dur = "8";
-            } else if (n.duration > quarterNoteRef * 1.5) {
-                dur = "h";
-            }
-
-            const pitch = n.name.toLowerCase().replace(/(\d+)/, '/$1');
-            const vexNote = new VF.StaveNote({ keys: [pitch], duration: dur });
-            
-            // Betűjel hozzáadása (C, D, E...) - nagyobb betűméret és fix hely
-            vexNote.addModifier(new VF.Annotation(n.name.replace(/\d+/,"")).setFont("Arial", 14, "bold"), 0);
-            
-            // Módosítójel (kereszt) kezelése
-            if (n.name.includes("#")) vexNote.addModifier(new VF.Accidental("#"), 0);
-            
-            // Kék kijelölés és Auto-Scroll vezérlés
-            if (i === currentIndex) {
-                vexNote.setStyle({ fillStyle: "#3498db", strokeStyle: "#3498db" });
-                // Automatikus görgetés az aktuális sorhoz
-                scrollToActiveLine(line);
-            }
-            lineNotes.push(vexNote);
-        }
-
-        if (lineNotes.length > 0) {
-            // A hangjegyek elhelyezése a sorban (szellős elrendezés)
-            const voice = new VF.Voice({ num_beats: lineNotes.length, beat_value: 4 }).setStrict(false);
-            voice.addTickables(lineNotes);
-            new VF.Formatter().joinVoices([voice]).format([voice], 750);
-            voice.draw(context, stave);
-        }
-    }
-}
-
-// Kiegészítő funkció a finom görgetéshez
-function scrollToActiveLine(lineIndex) {
-    const scrollContainer = document.getElementById('staff-scroll-container');
-    if (!scrollContainer) return;
-
-    const lineHeight = 180; // A sorok közötti távolság a kódban
-    const targetY = lineIndex * lineHeight;
-    
-    scrollContainer.scrollTo({
-        top: targetY,
-        behavior: 'smooth'
+        // Koordináták mentése a labda animációhoz
+        measure.forEach((vn) => {
+            const globalIdx = allVexNotes.indexOf(vn);
+            notePositions[globalIdx] = {
+                x: vn.getAbsoluteX(),
+                y: yPos,
+                line: line
+            };
+        });
     });
 }
 
-// Hang és Játék logika
+function animateBall() {
+    if (!raceActive && !isRunning) return;
+    const ballCanvas = document.getElementById('ballCanvas');
+    const bctx = ballCanvas.getContext('2d');
+    bctx.clearRect(0, 0, ballCanvas.width, ballCanvas.height);
+
+    if (currentIndex >= 0 && notePositions[currentIndex]) {
+        const pos = notePositions[currentIndex];
+        const beatDur = 60000 / bpm;
+        // 50-es BPM-nél is szépen pattog
+        const cycle = (performance.now() % beatDur) / beatDur;
+        const jumpY = Math.abs(Math.sin(cycle * Math.PI)) * 50;
+
+        bctx.beginPath();
+        bctx.arc(pos.x, pos.y - jumpY - 10, 10, 0, Math.PI * 2);
+        bctx.fillStyle = "#f1c40f";
+        bctx.fill();
+        
+        scrollToActiveLine(pos.line);
+    }
+    requestAnimationFrame(animateBall);
+}
+
+function scrollToActiveLine(lineIndex) {
+    const scrollContainer = document.getElementById('staff-scroll-container');
+    const targetY = Math.max(0, (lineIndex * 180) - 50);
+    scrollContainer.scrollTo({ top: targetY, behavior: 'smooth' });
+}
+
 function playSynthNote(n) {
     if (!audioCtx) audioCtx = new AudioContext();
     const osc = audioCtx.createOscillator();
@@ -211,30 +249,28 @@ function playSynthNote(n) {
 async function playOnlyDemo() {
     isRunning = true; raceActive = false;
     bpm = document.getElementById('bpm').value;
+    requestAnimationFrame(animateBall);
     for (let i = 0; i < songNotes.length; i++) {
         if (!isRunning) return;
         currentIndex = i;
         drawFullStaff();
         playSynthNote(songNotes[i].name);
-        await new Promise(r => setTimeout(r, (60000 / bpm) * (songNotes[i].duration < 0.25 ? 0.5 : 1)));
+        await new Promise(r => setTimeout(r, (60000 / bpm) * (songNotes[i].duration < (60/bpm) * 0.75 ? 0.5 : 1)));
     }
     stopEverything();
 }
 
 async function startGame() {
-    isRunning = true;
+    isRunning = false;
     bpm = document.getElementById('bpm').value;
     const cd = document.getElementById('countdown');
     cd.style.display = "block";
-    for(let i=3; i>=0; i--) {
-        cd.innerText = i || "RAJT!";
-        await new Promise(r => setTimeout(r, 1000));
-    }
+    for(let i=3; i>=0; i--) { cd.innerText = i || "RAJT!"; await new Promise(r => setTimeout(r, 1000)); }
     cd.style.display = "none";
     currentIndex = 0;
     raceActive = true;
     drawFullStaff();
-    document.getElementById('msg').innerText = "MEHET!";
+    requestAnimationFrame(animateBall);
 }
 
 function stopEverything() {
@@ -243,17 +279,6 @@ function stopEverything() {
     currentIndex = -1;
     drawFullStaff();
 }
-function scrollToActiveLine(lineIndex) {
-    const scrollContainer = document.getElementById('staff-scroll-container');
-    const lineHeight = 180; // Megegyezik a rajzolásnál használt eltolással
-    const targetY = lineIndex * lineHeight;
-    
-    // Finom görgetés az aktuális sorhoz
-    scrollContainer.scrollTo({
-        top: targetY,
-        behavior: 'smooth'
-    });
-}
 
 WebMidi.enable().then(() => {
     if (WebMidi.inputs.length > 0) {
@@ -261,7 +286,7 @@ WebMidi.enable().then(() => {
             if (!raceActive) return;
             if (e.note.identifier === songNotes[currentIndex].name) {
                 currentIndex++;
-                drawFullStaff(); // Ez frissíti a színt és a görgetést
+                drawFullStaff();
                 if (currentIndex >= songNotes.length) {
                     document.getElementById('msg').innerText = "GRATULÁLOK! 🎉";
                     raceActive = false;
