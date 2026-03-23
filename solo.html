@@ -113,58 +113,116 @@ async function loadSelectedSong() {
 }
 
 function drawFullStaff() {
+    if (!songNotes || songNotes.length === 0) return;
+    
     const container = document.getElementById('staff');
-    container.innerHTML = "";
+    container.innerHTML = ""; 
+    
     notePositions = []; 
+    allVexNotes = [];
+    bpm = parseInt(document.getElementById('bpm').value) || 80;
     
     const renderer = new VF.Renderer(container, VF.Renderer.Backends.SVG);
-    const quarterRef = 60 / bpm;
-    
-    // Előkészítjük az összes hangot VexFlow formátumban
-    let allVexNotes = [];
-    songNotes.forEach((n, i) => {
-        let dur = "q";
-        if (n.duration < quarterRef * 0.75) dur = "8";
-        else if (n.duration > quarterRef * 1.5) dur = "h";
+    const context = renderer.getContext();
 
-        const pitch = n.name.toLowerCase().replace(/(\d+)/, '/$1');
-        const vexNote = new VF.StaveNote({ keys: [pitch], duration: dur });
-        
-        // Felirat és módosítójel
-        vexNote.addModifier(new VF.Annotation(n.name.replace(/\d+/,"")).setFont("Arial", 12, "bold"), 0);
-        if (n.name.includes("#")) vexNote.addModifier(new VF.Accidental("#"), 0);
-        
-        // Aktuális hang színezése
-        if (i === currentIndex) {
-            vexNote.setStyle({ fillStyle: "#3498db", strokeStyle: "#3498db" });
+    // --- 1. ÜTEMMUTATÓ ÉS MATEMATIKA ---
+    const beatsPerBar = timeSignature.num || 4; // pl. 4
+    const beatValue = timeSignature.den || 4;  // pl. 4 (negyed)
+    const quarterRef = 60 / bpm; // Egy negyed hossza másodpercben
+
+    let currentMeasureBeats = 0;
+    let tempNotes = [];
+
+    // --- 2. MIDI HANGOK ÉS SZÜNETEK KISZÁMÍTÁSA ---
+    let currentTime = 0;
+
+    songNotes.forEach((n, index) => {
+        // Rés (szünet) detektálása a hangok között
+        let gap = n.time - currentTime;
+        if (gap > 0.05) { // 50ms-nál nagyobb lyuk már szünet
+            addVexElement(gap, true, "B4", tempNotes);
         }
-        allVexNotes.push(vexNote);
+        
+        // Maga a hang hozzáadása
+        addVexElement(n.duration, false, n.name, tempNotes);
+        currentTime = n.time + n.duration;
     });
 
-    // Ütemekbe rendezés az ütemmutató alapján (pl. 4 negyed egy ütem)
-    const beatsPerBar = timeSignature.num;
+    // --- 3. UTOLSÓ ÜTEM KIEGÉSZÍTÉSE ---
+    // Ha a dal végén az utolsó ütem nem teljes, kipótoljuk szünettel
+    let totalBeatsInLastMeasure = 0;
+    tempNotes.forEach(vn => {
+        totalBeatsInLastMeasure += getDurationDecimal(vn.duration);
+    });
+    let remaining = beatsPerBar - (totalBeatsInLastMeasure % beatsPerBar);
+    if (remaining < beatsPerBar && remaining > 0) {
+        addVexElement(remaining * quarterRef, true, "B4", tempNotes);
+    }
+
+    // Segédfüggvény a hangjegyek létrehozásához
+    function addVexElement(durationSec, isRest, pitchName, targetArray) {
+        let durKey = "q";
+        let val = durationSec / quarterRef; // Negyedekben kifejezve
+
+        if (val <= 0.7) durKey = "8";
+        else if (val > 1.4) durKey = "h";
+        else durKey = "q";
+
+        if (isRest) durKey += "r";
+
+        let cleanPitch = pitchName.toLowerCase().replace(/(\d+)/, '/$1');
+        const vexNote = new VF.StaveNote({
+            keys: [isRest ? "b/4" : cleanPitch],
+            duration: durKey,
+            auto_stem: true
+        });
+
+        if (!isRest) {
+            vexNote.addModifier(new VF.Annotation(pitchName.replace(/\d+/, "")).setFont("Arial", 10, "bold"), 0);
+            if (pitchName.includes("#")) vexNote.addModifier(new VF.Accidental("#"), 0);
+        }
+
+        // Egyéni metaadatok a lejátszáshoz
+        vexNote.myCustomIsRest = isRest;
+        vexNote.noteName = pitchName;
+        vexNote.realDuration = durationSec; 
+        
+        targetArray.push(vexNote);
+    }
+
+    function getDurationDecimal(dur) {
+        if (dur.includes("h")) return 2;
+        if (dur.includes("q")) return 1;
+        if (dur.includes("8")) return 0.5;
+        return 0;
+    }
+
+    // --- 4. ÜTEMEKRE OSZTÁS (MATEMATIKAI PONTOSSÁGGAL) ---
+    allVexNotes = tempNotes;
     let measures = [];
-    let currentMeasure = [];
-    let currentBeats = 0;
+    let currentM = [];
+    let currentB = 0;
 
-    allVexNotes.forEach((vn, idx) => {
-        let noteValue = vn.duration === "8" ? 0.5 : (vn.duration === "h" ? 2 : 1);
-        
-        if (currentBeats + noteValue > beatsPerBar) {
-            measures.push(currentMeasure);
-            currentMeasure = [];
-            currentBeats = 0;
+    allVexNotes.forEach(vn => {
+        let val = getDurationDecimal(vn.duration);
+        if (currentB + val > beatsPerBar + 0.01) {
+            measures.push(currentM);
+            currentM = [];
+            currentB = 0;
         }
-        currentMeasure.push(vn);
-        currentBeats += noteValue;
+        currentM.push(vn);
+        currentB += val;
     });
-    if (currentMeasure.length > 0) measures.push(currentMeasure);
+    if (currentM.length) measures.push(currentM);
+
+    // --- 5. KIRAJZOLÁS (A korábbi kódod alapján, de stabilabb alapokon) ---
+    // ... (itt jön a renderer.resize és a stave.draw rész, amit már használtál)
 
     // Kirajzolás soronként (pl. 3 ütem soronként)
     const measuresPerLine = 3;
     const lineCount = Math.ceil(measures.length / measuresPerLine);
     renderer.resize(1000, lineCount * 200);
-    const context = renderer.getContext();
+
 
     // Labda canvas igazítása
     const ballCanvas = document.getElementById('ballCanvas');
@@ -246,17 +304,55 @@ function playSynthNote(n) {
     osc.start(); osc.stop(audioCtx.currentTime + 0.4);
 }
 
+// A demo lejátszásnál a szünet alatt nem szól semmi, de az IDŐ telik!
+
 async function playOnlyDemo() {
-    isRunning = true; raceActive = false;
-    bpm = document.getElementById('bpm').value;
-    requestAnimationFrame(animateBall);
-    for (let i = 0; i < songNotes.length; i++) {
-        if (!isRunning) return;
-        currentIndex = i;
-        drawFullStaff();
-        playSynthNote(songNotes[i].name);
-        await new Promise(r => setTimeout(r, (60000 / bpm) * (songNotes[i].duration < (60/bpm) * 0.75 ? 0.5 : 1)));
+    // 1. Alapállapot resetelése
+    stopEverything(); 
+    isRunning = true; 
+    bpm = document.getElementById('bpm').value || 80;
+
+    // 2. Audio kontextus ébresztése (böngésző biztonsági korlátok miatt)
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === 'suspended') {
+        await audioCtx.resume();
     }
+
+    // 3. Animáció elindítása (a golyó ugrálása)
+    requestAnimationFrame(animateBall);
+
+    // 4. Végighaladunk az összes kottabeli elemen (hang + szünet)
+    for (let i = 0; i < allVexNotes.length; i++) {
+        // Ha közben megnyomták a STOP gombot, azonnal kilépünk
+        if (!isRunning) break;
+
+        currentIndex = i;
+        
+        // Frissítjük a kottát (hogy az aktuális hang kék legyen)
+        // Megjegyzés: a drawFullStaff() hívás opcionális itt, ha a teljesítmény bírja,
+        // de a currentIndex változása miatt az animateBall tudni fogja, hol jár.
+        drawFullStaff();
+
+        const currentNote = allVexNotes[i];
+
+        // 5. Hangadás vagy csend kezelése
+        if (currentNote.myCustomIsRest === false) {
+            // Ha ez egy valódi hang, megszólaltatjuk
+            playSynthNote(currentNote.noteName);
+        } else {
+            // Ha szünet, csak naplózzuk (debug célból)
+            console.log("Szünet betartása...");
+        }
+
+        // 6. IDŐZÍTÉS: Megvárjuk a hang/szünet pontos hosszát
+        // A realDuration másodpercben van tárolva (pl. 0.5s egy nyolcadnál 120 BPM-nél)
+        const waitMs = currentNote.realDuration * 1000;
+        
+        await new Promise(resolve => setTimeout(resolve, waitMs));
+    }
+
+    // 7. Befejezés
+    console.log("DEMO vége.");
     stopEverything();
 }
 
