@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="hu">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kétkezes MIDI Kottázó</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; padding: 20px; background: #f4f6f9; color: #333; }
+        h1 { text-align: center; color: #2c3e50; }
+        .container { max-width: 900px; margin: 0 auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+        #kotta-canvas-container { background: #fff; border: 2px solid #e0e0e0; border-radius: 4px; min-height: 280px; margin: 20px 0; display: flex; justify-content: center; align-items: center; overflow-x: auto; }
+        .controls { display: flex; flex-wrap: wrap; gap: 15px; margin-bottom: 20px; background: #edf2f7; padding: 15px; border-radius: 6px; justify-content: center; }
+        label { font-weight: bold; display: flex; align-items: center; gap: 8px; }
+        button { padding: 10px 18px; font-weight: bold; border-radius: 4px; border: none; cursor: pointer; transition: background 0.2s; }
+        .btn-main { background: #3182ce; color: white; }
+        .btn-main:hover { background: #2b6cb0; }
+        .btn-success { background: #38a169; color: white; }
+        .btn-success:hover { background: #2f855a; }
+        .btn-danger { background: #e53e3e; color: white; }
+        .btn-danger:hover { background: #c53030; }
+        #status-bar { text-align: center; font-style: italic; color: #718096; margin-bottom: 10px; }
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/vexflow@4.2.2/build/cjs/vexflow.js"></script>
+    <script src="https://unpkg.com/midi-writer-js/browser/midiwriter.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+</head>
+<body>
+
+<div class="container">
+    <h1>Yamaha Intelligens Kétkezes Kottázó</h1>
+    <div id="status-bar">Keresem a zongorát... Csatlakoztasd az USB-t.</div>
+
+    <div class="controls">
+        <label>Ütemezés: 
+            <select id="utem">
+                <option value="4/4">4/4</option>
+                <option value="3/4">3/4</option>
+            </select>
+        </label>
+        <label>Tempó (BPM): <input type="number" id="bpm" value="100" style="width: 60px; padding: 4px;"></label>
+    </div>
+
+    <div class="controls">
+        <button id="torol-utolso" class="btn-main">⏮ Utolsó hang törlése</button>
+        <button id="modosit-ritmus" class="btn-main">🔄 Ritmus váltás (Ti ↔ Tá)</button>
+        <button id="tisztit" class="btn-danger">🗑 Mindent töröl</button>
+    </div>
+
+    <div id="kotta-canvas-container">
+        <div id="boo"></div>
+    </div>
+
+    <div class="controls" style="background: none;">
+        <button id="ment-midi" class="btn-success">💾 MIDI letöltése (.mid)</button>
+        <button id="ment-pdf" class="btn-success">🖨 Kotta mentése (PDF)</button>
+    </div>
+</div>
+
+<script>
+    let rögzítettHangok = [];
+    let aktivHangok = {}; 
+    const KÖZÉPSŐ_C = 60; // MIDI kód 60. Ez alatt bal kéz, ettől felfelé jobb kéz.
+
+    // MIDI hangkódok átváltása VexFlow formátumra (pl. 60 -> c/4)
+    const MIDI_TO_NOTE = {
+        57: "a/3", 59: "b/3", 60: "c/4", 62: "d/4", 64: "e/4", 65: "f/4", 67: "g/4", 69: "a/4", 71: "b/4", 72: "c/5", 74: "d/5", 76: "e/5", 77: "f/5", 79: "g/5",
+        48: "c/3", 50: "d/3", 52: "e/3", 53: "f/3", 55: "g/3", 45: "a/2", 47: "b/2", 43: "g/2", 41: "f/2", 40: "e/2", 38: "d/2", 36: "c/2"
+    };
+
+    // Alapértelmezett hang, ha a leütött fekete billentyű nincs a fenti egyszerűsített listában
+    function getNoteName(midi) {
+        if (MIDI_TO_NOTE[midi]) return MIDI_TO_NOTE[midi];
+        // Egyszerűsített kezelés a félhangokra
+        let közeli = MIDI_TO_NOTE[midi - 1];
+        return közeli ? közeli + "#" : "c/4";
+    }
+
+    // 1. Web MIDI API indítása
+    if (navigator.requestMIDIAccess) {
+        navigator.requestMIDIAccess().then(onMIDISuccess, onMIDIFailure);
+    } else {
+        document.getElementById('status-bar').innerText = "A böngésző nem támogatja a MIDI-t. Használj Chrome-ot!";
+    }
+
+    function onMIDISuccess(midiAccess) {
+        document.getElementById('status-bar').innerText = "Zongora készenlétben. Kezdhetsz játszani!";
+        const inputs = midiAccess.inputs.values();
+        for (let input of inputs) { input.onmidimessage = getMIDIMessage; }
+    }
+    function onMIDIFailure() { document.getElementById('status-bar').innerText = "Nem sikerült kapcsolódni a zongorához."; }
+
+    // 2. MIDI adatok beolvasása
+    function getMIDIMessage(message) {
+        let command = message.data[0];
+        let note = message.data[1];
+        let velocity = (message.data.length > 2) ? message.data[2] : 0;
+        let timestamp = performance.now();
+
+        if (command === 144 && velocity > 0) { 
+            aktivHangok[note] = timestamp;
+        } 
+        else if (command === 128 || (command === 144 && velocity === 0)) { 
+            if (aktivHangok[note]) {
+                let időtartam = timestamp - aktivHangok[note];
+                delete aktivHangok[note];
+                
+                let bpm = document.getElementById('bpm').value;
+                let negyedHangMs = (60 / bpm) * 1000;
+                
+                // Ti-Tá automatikus felismerés küszöbértéke
+                let ritmus = "tá"; 
+                let duration = "q"; // q = quarter (negyed)
+                if (időtartam < negyedHangMs * 0.75) {
+                    ritmus = "ti";
+                    duration = "8"; // 8 = nyolcad
+                }
+
+                // Elhelyezés: Jobb kéz (treble) vagy Bal kéz (bass) a hang magassága alapján
+                let kezeid = note >= KÖZÉPSŐ_C ? "treble" : "bass";
+
+                rögzítettHangok.push({ note: note, ritmus: ritmus, duration: duration, clef: kezeid });
+                rajzolKotta();
+            }
+        }
+    }
+
+    // 3. A KOTTA KIRAJZOLÁSA (VexFlow)
+    function rajzolKotta() {
+        const div = document.getElementById("boo");
+        div.innerHTML = ""; // Előző kotta letörlése
+
+        const { Renderer, Stave, StaveNote, Voice, Formatter, StaveConnector } = Vex.Flow;
+
+        // Canvas létrehozása
+        const renderer = new Renderer(div, Renderer.Backends.SVG);
+        renderer.resize(750, 260);
+        const ctx = renderer.getContext();
+
+        // Felső sáv (Jobb kéz - Violin kulcs)
+        const topStaff = new Stave(40, 10, 680);
+        topStaff.addClef('treble').addTimeSignature(document.getElementById('utem').value);
+        topStaff.setContext(ctx).draw();
+
+        // Alsó sáv (Bal kéz - Basszus kulcs)
+        const bottomStaff = new Stave(40, 130, 680);
+        bottomStaff.addClef('bass').addTimeSignature(document.getElementById('utem').value);
+        bottomStaff.setContext(ctx).draw();
+
+        // Kottasorok összekötése (Zongora zárójel és vonalak)
+        const brace = new StaveConnector(topStaff, bottomStaff).setType(3); // 3 = brace (kapocs)
+        const lineLeft = new StaveConnector(topStaff, bottomStaff).setType(1); // 1 = bal oldali vonal
+        brace.setContext(ctx).draw();
+        lineLeft.setContext(ctx).draw();
+
+        let trebleNotes = [];
+        let bassNotes = [];
+
+        // Hangok szétválogatása a megfelelő kottasorba
+        rögzítettHangok.forEach(h => {
+            let noteKey = getNoteName(h.note);
+            
+            if (h.clef === "treble") {
+                trebleNotes.push(new StaveNote({ keys: [noteKey], duration: h.duration, clef: "treble" }));
+                // A másik sorba szünetet teszünk, hogy egyszerre fussanak
+                bassNotes.push(new StaveNote({ keys: ["b/2"], duration: h.duration + "r", clef: "bass" }));
+            } else {
+                bassNotes.push(new StaveNote({ keys: [noteKey], duration: h.duration, clef: "bass" }));
+                trebleNotes.push(new StaveNote({ keys: ["b/4"], duration: h.duration + "r", clef: "treble" }));
+            }
+        });
+
+        // Ha még nincs hang, üres kottát mutatunk
+        if (rögzítettHangok.length === 0) return;
+
+        // Szólamok létrehozása (Hány negyedből áll a rögzített anyag)
+        let beats = rögzítettHangok.reduce((acc, h) => acc + (h.duration === "q" ? 1 : 0.5), 0);
+
+        // Időalapú hangok összehangolása
+        const v1 = new Voice({ num_beats: beats, beat_value: 4 }).setMode(Voice.Mode.SOFT);
+        v1.addTickables(trebleNotes);
+
+        const v2 = new Voice({ num_beats: beats, beat_value: 4 }).setMode(Voice.Mode.SOFT);
+        v2.addTickables(bassNotes);
+
+        // Igazítás és rajzolás
+        new Formatter().joinVoices([v1, v2]).format([v1, v2], 600);
+        v1.draw(ctx, topStaff);
+        v2.draw(ctx, bottomStaff);
+    }
+
+    // 4. BELEZAVARÁS / KÉZI MÓDOSÍTÁSOK BUTTONS
+    document.getElementById('torol-utolso').addEventListener('click', () => {
+        rögzítettHangok.pop();
+        rajzolKotta();
+    });
+
+    document.getElementById('modosit-ritmus').addEventListener('click', () => {
+        if(rögzítettHangok.length > 0) {
+            let utolso = rögzítettHangok[rögzítettHangok.length - 1];
+            if(utolso.ritmus === "tá") {
+                utolso.ritmus = "ti";
+                utolso.duration = "8";
+            } else {
+                utolso.ritmus = "tá";
+                utolso.duration = "q";
+            }
+            rajzolKotta();
+        }
+    });
+
+    document.getElementById('tisztit').addEventListener('click', () => {
+        rögzítettHangok = [];
+        rajzolKotta();
+    });
+
+    document.getElementById('utem').addEventListener('change', rajzolKotta);
+
+    // 5. MENTÉSEK (MIDI és PDF)
+    document.getElementById('ment-midi').addEventListener('click', () => {
+        if(rögzítettHangok.length === 0) return alert("Nincs rögzített hang!");
+        
+        const track = new MidiWriter.Track();
+        track.setTempo(document.getElementById('bpm').value);
+        
+        rögzítettHangok.forEach(h => {
+            // A MidiWriter-nek a "duration" más formátum (1 = egész, 4 = negyed, 8 = nyolcad)
+            let mDuration = h.duration === "q" ? "4" : "8";
+            track.addEvent(new MidiWriter.NoteEvent({pitch: [h.note], duration: mDuration}));
+        });
+        
+        const write = new MidiWriter.Writer(track);
+        const link = document.createElement('a');
+        link.href = write.dataUri();
+        link.download = 'zongora_felvetel.mid';
+        link.click();
+    });
+
+    document.getElementById('ment-pdf').addEventListener('click', () => {
+        const { jsPDF } = window.jspdf;
+        const doc = new jsPDF('l', 'pt', 'a4'); // Fekvő formátum a kottának
+        
+        doc.text("Saját Zongora Kotta", 40, 40);
+        doc.text("Tempó: " + document.getElementById('bpm').value + " BPM", 40, 60);
+
+        // Kiszedjük a kottát reprezentáló SVG grafikát az oldalból
+        const svgElement = document.querySelector("#boo svg");
+        if(!svgElement) return alert("Nincs mit menteni!");
+
+        // Átalakítjuk az SVG-t képpé, hogy a PDF-be tehessük
+        const xml = new XMLSerializer().serializeToString(svgElement);
+        const svg64 = btoa(unescape(encodeURIComponent(xml)));
+        const b64Start = 'data:image/svg+xml;base64,';
+        const image64 = b64Start + svg64;
+
+        const img = new Image();
+        img.src = image64;
+        img.onload = function() {
+            doc.addImage(img, 'PNG', 40, 80, 700, 250);
+            doc.save('sajat_kotta.pdf');
+        };
+    });
+</script>
+
+</body>
+</html>
